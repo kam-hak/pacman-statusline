@@ -40,21 +40,33 @@ repo  branch  traffic  5h-gauge  7d-gauge  ctx  model  [git-stats]
 
 macOS only for now. Requires [`uv`](https://docs.astral.sh/uv/) and `curl`.
 
+**1. Patch the font.**
+
 ```bash
 ./install.sh
 ```
 
 The installer:
 
-1. Downloads MesloLGS NF (all 4 weights) into `~/Library/Fonts/` if missing.
-2. Backs up the pristine fonts as `*.ttf.bak`, then patches each with a
-   horizontally-mirrored pac-man glyph inserted at the first free PUA-A
-   codepoint above U+F1000.
-3. Writes the chosen codepoint to `~/.config/pacman-statusline/config`.
-4. Symlinks `~/.claude/statusline-command.sh` at this repo's script so
-   Claude Code reads your edits live.
+- Downloads MesloLGS NF (all 4 weights) into `~/Library/Fonts/` if missing
+- Backs up the pristine fonts as `*.ttf.bak`, then patches each with a
+  horizontally-mirrored pac-man glyph inserted at the first free PUA-A
+  codepoint above U+F1000
+- Writes the chosen codepoint to `~/.config/pacman-statusline/config`
 
 Restart your terminal afterwards so the patched font reloads.
+
+**2. Point Claude Code at the script.**
+
+In Claude Code, run:
+
+```
+/statusline
+```
+
+and paste the absolute path to `statusline-command.sh` in this repo. Claude
+Code records the path in `~/.claude/settings.json` and picks up edits to the
+script live — no copy or symlink required.
 
 ### Font
 

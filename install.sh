@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
-# pacman-statusline installer — macOS only.
+# pacman-statusline font installer — macOS only.
 #
 #   1. Ensures MesloLGS NF (4 weights) lives in ~/Library/Fonts/
 #   2. Patches each weight with a horizontally-mirrored pac-man glyph
 #   3. Writes the chosen codepoint to ~/.config/pacman-statusline/config
-#   4. Symlinks ~/.claude/statusline-command.sh → this repo's script
+#
+# Wiring the script into Claude Code is done separately via Claude Code's
+# own `/statusline` slash command — point it at this repo's
+# statusline-command.sh and Claude Code writes the path into settings.json.
 
 set -euo pipefail
 
@@ -13,7 +16,6 @@ PATCHER="$REPO_DIR/scripts/patch-font.py"
 FONT_DIR="$HOME/Library/Fonts"
 CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/pacman-statusline"
 CONFIG_FILE="$CONFIG_DIR/config"
-CLAUDE_STATUSLINE="$HOME/.claude/statusline-command.sh"
 
 WEIGHTS=("Regular" "Bold" "Italic" "Bold Italic")
 MEDIA_BASE="https://github.com/romkatv/powerlevel10k-media/raw/master"
@@ -34,7 +36,7 @@ command -v uv   >/dev/null     || die "missing dependency: uv (https://docs.astr
 command -v curl >/dev/null     || die "missing dependency: curl"
 [[ -f "$PATCHER" ]]             || die "patcher script not found at $PATCHER"
 
-mkdir -p "$FONT_DIR" "$CONFIG_DIR" "$(dirname "$CLAUDE_STATUSLINE")"
+mkdir -p "$FONT_DIR" "$CONFIG_DIR"
 
 # --- ensure fonts exist ------------------------------------------------------
 
@@ -94,20 +96,6 @@ cat > "$CONFIG_FILE" <<EOF
 PAC_L_CODEPOINT=$TARGET_CP
 EOF
 
-# --- symlink statusline script ----------------------------------------------
-
-expected_target="$REPO_DIR/statusline-command.sh"
-if [[ -L "$CLAUDE_STATUSLINE" && "$(readlink "$CLAUDE_STATUSLINE")" == "$expected_target" ]]; then
-  log "symlink already in place: $CLAUDE_STATUSLINE"
-else
-  if [[ -e "$CLAUDE_STATUSLINE" && ! -L "$CLAUDE_STATUSLINE" ]]; then
-    cp "$CLAUDE_STATUSLINE" "$CLAUDE_STATUSLINE.bak"
-    warn "backed up existing file → $CLAUDE_STATUSLINE.bak"
-  fi
-  ln -sf "$expected_target" "$CLAUDE_STATUSLINE"
-  log "symlinked $CLAUDE_STATUSLINE → repo"
-fi
-
 # --- done --------------------------------------------------------------------
 
 cat <<EOF
@@ -116,8 +104,11 @@ done.
 
   patched codepoint : $TARGET_CP
   config            : $CONFIG_FILE
-  statusline script : $CLAUDE_STATUSLINE → repo
+  statusline script : $REPO_DIR/statusline-command.sh
 
-restart your terminal (and any app using MesloLGS NF) so the patched font
-loads, then restart Claude Code to pick up the new statusline.
+next:
+  1. restart your terminal (and any app using MesloLGS NF) so the patched
+     font loads
+  2. in Claude Code, run:  /statusline
+     and paste the path:   $REPO_DIR/statusline-command.sh
 EOF
