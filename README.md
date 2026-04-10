@@ -19,6 +19,23 @@ When you outpace the budget, pac flips around (left-facing) and starts
 retreating past the pellet — the pacing tier escalates from neutral → yellow
 → red as the overspend gets worse.
 
+### How the two windows couple
+
+The 5h and 7d gauges play different roles:
+
+- **7d is "use it or lose it".** The weekly budget resets; leaving it on the
+  table is waste. Being *behind* on 7d should feel bad.
+- **5h is a guard rail.** You don't want to burn through it and get locked
+  out. Being *ahead* on 5h should feel bad.
+
+7d is fully autonomous. 5h is semi-independent: it can escalate to yellow/red
+on its own when you're overspending the short window, but it can never
+display a *better* tier than 7d. When 7d is worse than 5h's own reading, 5h
+inherits 7d's pacman wholesale (score, color, direction, ghost) so the two
+gauges never disagree in a way that would read as mixed signals. The pellet
+in each gauge always marks that window's own time-elapsed, independent of
+the other.
+
 ## Segments
 
 ```
@@ -94,14 +111,15 @@ and a family of functions:
 
 | Type      | State prefix | Responsibility                                      |
 |-----------|--------------|-----------------------------------------------------|
-| `Input`   | `IN_*`       | Parse JSON once, narrow into typed fields           |
-| `Repo`    | `REPO_*`     | Location, branch, hashed color                      |
-| `Traffic` | —            | Business-hours frown                                |
-| `Window`  | `W5_*`/`W7_*`| Asymmetric pacing + 5h adjustments (inherit/sprint) |
-| `Gauge`   | —            | Stateless pac-man bar renderer                      |
-| `Context` | `CTX_*`      | Autocompact-aware meter + quality budget            |
-| `Model`   | `MODEL_*`    | Tier, 1M flag, effort, opus alert escalation        |
-| `Git`     | `GIT_*`      | Dirty counts and diffstat                           |
+| `Input`   | `IN_*`         | Parse JSON once, narrow into typed fields           |
+| `Repo`    | `REPO_*`       | Location, branch, hashed color                      |
+| `Traffic` | —              | Business-hours frown                                |
+| `Window`  | `W5_*`/`W7_*`  | Asymmetric pacing score per window                  |
+| `Pacman`  | `PAC5_*`/`PAC7_*` | Score/color/direction bundle; 5h inherits 7d when worse |
+| `Gauge`   | —              | Stateless pac-man bar renderer                      |
+| `Context` | `CTX_*`        | Autocompact-aware meter + quality budget            |
+| `Model`   | `MODEL_*`      | Tier, 1M flag, effort, opus alert escalation        |
+| `Git`     | `GIT_*`        | Dirty counts and diffstat                           |
 
 `main()` at the bottom reads like prose: parse → compute → render.
 

@@ -193,9 +193,6 @@ def build_configs(cwd: str):
         ("red alert — opus burning, ctx tightening",
          fixture(cwd, u5=70, tl5=mid5, u7=82, tl7=mid7, ctx=22, model="Opus 4.6")),
 
-        ("1M context over budget — sonnet·1m",
-         fixture(cwd, u5=50, tl5=mid5, u7=50, tl7=mid7, ctx=50, model="Sonnet 4.6 1M")),
-
         ("final-window sprint — 7d resets inside 5h",
          fixture(cwd, u5=55, tl5=mid5, u7=65, tl7=3600, ctx=48, model="Opus 4.6")),
 
@@ -221,9 +218,10 @@ def build_svg(rows) -> str:
         sys.exit(f"error: font not found at {FONT}")
     font_b64 = base64.b64encode(FONT.read_bytes()).decode()
 
-    # Width sized for the widest expected row — statuslines are ~110 visible
-    # chars on a Nerd Font at 20px (~11.4px advance). Round up with margin.
-    width = 1500
+    # Sized for the widest rendered row through ctx + model + git octocat.
+    # At 20px MesloLGS NF with double-width Nerd glyphs, a full statusline
+    # lands around 1600 px — 1900 leaves a comfortable right margin.
+    width = 1900
     height = PAD_Y * 2 + len(rows) * ROW_BLOCK - ROW_GAP
 
     out = [
@@ -263,24 +261,26 @@ def build_svg(rows) -> str:
 # ─── entry ──────────────────────────────────────────────────────────────────
 
 def rasterize_to_png() -> None:
-    """Use macOS qlmanage (WebKit) so @font-face and base64 fonts are honored.
+    """Use librsvg's rsvg-convert to rasterize the SVG at PNG_WIDTH px wide.
+
+    Height scales proportionally, preserving the SVG's aspect ratio. We moved
+    off macOS qlmanage because its WebKit renderer silently drops later
+    <tspan> elements in long xml:space="preserve" <text> rows that embed an
+    @font-face, and because `qlmanage -s N` always produces square output.
 
     GitHub's Markdown sanitizer strips <style> from SVGs, which breaks the
     embedded font — so README pages need a PNG, not the SVG directly. The SVG
     stays in-repo as the high-fidelity source artifact.
     """
-    import shutil
-    import tempfile
-
-    with tempfile.TemporaryDirectory() as tmp:
-        subprocess.run(
-            ["qlmanage", "-t", "-s", str(PNG_WIDTH), "-o", tmp, str(OUTPUT_SVG)],
-            capture_output=True, check=True,
-        )
-        produced = Path(tmp) / (OUTPUT_SVG.name + ".png")
-        if not produced.exists():
-            raise RuntimeError(f"qlmanage did not produce {produced}")
-        shutil.move(str(produced), OUTPUT_PNG)
+    subprocess.run(
+        [
+            "rsvg-convert",
+            "-w", str(PNG_WIDTH),
+            "-o", str(OUTPUT_PNG),
+            str(OUTPUT_SVG),
+        ],
+        capture_output=True, check=True,
+    )
 
 
 def main() -> int:

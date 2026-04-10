@@ -10,8 +10,9 @@
 #   Input       — parse JSON once, narrow into IN_* state
 #   Repo        — location, branch, hashed color
 #   Traffic     — business-hours frown
-#   Window      — PacingWindow base + Window5h / Window7d adjustments
-#   Gauge       — pac-man bar renderer (stateless, takes used/target/color/score)
+#   Window      — PacingWindow: used/target/score per window
+#   Pacman      — score/color/direction bundle; 5h inherits 7d when worse
+#   Gauge       — pac-man bar renderer (stateless, takes geometry + pacman)
 #   Context     — autocompact-aware meter + quality-budget
 #   Model       — tier + 1M + effort, with opus 7d-pacing alerts
 #   Git         — dirty counts + diffstat
@@ -265,7 +266,11 @@ window7_parse() {
     <<< "$(_window_compute "$W7_used" "$IN_rl7_reset" 604800)"
 }
 
-# ─── Window5h: compute, then apply four adjustments in order ───
+# ─── Window5h: simple compute, identical shape to 7d ───
+#
+# 5h and 7d compute independently here. Their interaction lives in the
+# Pacman layer (below): 5h inherits 7d's pacman-bundle when 7d is worse.
+# This window owns only the local geometry (used + target = time elapsed).
 
 window5_parse() {
   if [ -z "$IN_rl5_used" ] || [ "$IN_rl5_used" = "null" ]; then return; fi
@@ -274,60 +279,50 @@ window5_parse() {
   if [ -z "$IN_rl5_reset" ] || [ "$IN_rl5_reset" = "null" ]; then return; fi
   read -r W5_score W5_target W5_time_left \
     <<< "$(_window_compute "$W5_used" "$IN_rl5_reset" 18000)"
-
-  _window5_inherit_from_7d
-  _window5_sprint_if_final_window
-  _window5_ensure_visible_dots
-  _window5_cap_positive_tier
 }
 
-# 7d pressure propagates down to 5h. When weekly is behind, encourage 5h
-# spending ("use it or lose it"). Otherwise clamp 5h underspend to neutral.
-_window5_inherit_from_7d() {
-  if (( W7_score <= -20 )); then
-    local floor=$(( W7_score / 2 ))
-    (( W5_score > floor )) && W5_score=$floor
-  elif (( W7_score <= -6 )); then
-    local floor=$(( W7_score / 3 ))
-    (( W5_score > floor )) && W5_score=$floor
-  elif (( W5_score < 0 )); then
-    W5_score=0
-  fi
+# ═══════════════════════════════════════════════════════════════════
+# Pacman: the agent in each gauge
+#
+# Bundles score → tier → color → direction so they move as one unit and
+# can never disagree. The 5h bundle inherits 7d's wholesale when 7d is
+# worse (PAC7_score > PAC5_score): 5h is a guard rail that defers to
+# 7d's use-it-or-lose-it pressure whenever 7d would show a worse state.
+#
+# Geometry (pellet + pac position in the bar) is NOT inherited — that
+# stays driven by each window's own used/target so the pellet always
+# marks local time-elapsed.
+# ═══════════════════════════════════════════════════════════════════
+
+PAC5_score=0; PAC5_color=$C_WHT; PAC5_dir=$_PAC_R
+PAC7_score=0; PAC7_color=$C_WHT; PAC7_dir=$_PAC_R
+
+# Yellow/red → retreating (left). Neutral/green/purple → advancing (right).
+_pacman_dir_for_tier() {
+  (( $1 <= T_YELLOW )) && echo "$_PAC_L" || echo "$_PAC_R"
 }
 
-# Final-window sprint: when 7d resets inside one 5h window, this IS the
-# last 5h. Burn everything — unless weekly is already nearly empty (<7%).
-# One 5h window ≈ 7% of weekly (burst cap, not linear slice).
-_window5_sprint_if_final_window() {
-  (( W7_time_left <= 0 || W7_time_left >= 18000 )) && return
-  local weekly_remaining=$(( 100 - W7_used ))
-  (( weekly_remaining < 7 )) && return
-
-  W5_target=$(( weekly_remaining * 100 / 7 ))
-  (( W5_target > 100 )) && W5_target=100
-  (( W5_score > -20 )) && W5_score=-25
-}
-
-# Pellet must be ≥30% ahead of used so dots are always visible.
-# 5h is "use it or lose it" — the pellet represents available budget.
-_window5_ensure_visible_dots() {
-  local min=$(( W5_used + 30 ))
-  (( min > 100 )) && min=100
-  (( W5_target < min )) && W5_target=$min
-}
-
-# 5h cannot display a better positive tier than 7d. Both pac color and
-# ghost color inherit from this score, so capping here covers both.
-_window5_cap_positive_tier() {
+pacman_parse() {
   local t5 t7
-  t5=$(tier_of "$W5_score")
-  t7=$(tier_of "$W7_score")
-  (( t5 <= T_NEUTRAL )) && return
-  (( t5 <= t7 )) && return
-  case $t7 in
-    $T_NEUTRAL) W5_score=-5  ;;   # just inside white (> -6 threshold)
-    $T_GREEN)   W5_score=-19 ;;   # just inside green (> -20 threshold)
-  esac
+  if (( W7_present )); then
+    PAC7_score=$W7_score
+    t7=$(tier_of "$W7_score")
+    PAC7_color=$(tier_color "$t7")
+    PAC7_dir=$(_pacman_dir_for_tier "$t7")
+  fi
+  if (( W5_present )); then
+    PAC5_score=$W5_score
+    t5=$(tier_of "$W5_score")
+    PAC5_color=$(tier_color "$t5")
+    PAC5_dir=$(_pacman_dir_for_tier "$t5")
+  fi
+
+  # 5h inherits 7d's bundle when 7d is worse. Full copy — score, color, dir.
+  if (( W5_present && W7_present && PAC7_score > PAC5_score )); then
+    PAC5_score=$PAC7_score
+    PAC5_color=$PAC7_color
+    PAC5_dir=$PAC7_dir
+  fi
 }
 
 # ═══════════════════════════════════════════════════════════════════
@@ -349,9 +344,11 @@ _window5_cap_positive_tier() {
 #   red ahead:      adjacent ok
 # ═══════════════════════════════════════════════════════════════════
 
-# Stateless: all inputs explicit, all rendering self-contained.
+# Stateless: geometry (used/target) from the local window, pacman bundle
+# (color/dir/score) passed in explicitly so 5h can render with an inherited
+# 7d bundle while keeping its own pellet position.
 gauge_render() {
-  local used=$1 target=$2 color=$3 score=$4 width=${5:-10}
+  local used=$1 target=$2 color=$3 pac=$4 score=$5 width=${6:-10}
 
   local ppos=$(( used * width / 100 ))
   local tpos=$(( target * width / 100 ))
@@ -360,18 +357,12 @@ gauge_render() {
   (( tpos >= width )) && tpos=$(( width - 1 ))
   (( tpos < 0 ))      && tpos=0
 
-  local overspend=0
-  (( ppos > tpos )) && overspend=1
-
-  local pac="$_PAC_R"
-  (( overspend )) && pac="$_PAC_L"
-
   local gpos
   gpos=$(_gauge_ghost_pos "$ppos" "$score" "$width")
 
   local i
   for (( i=0; i<width; i++ )); do
-    _gauge_cell "$i" "$ppos" "$tpos" "$gpos" "$overspend" "$color" "$pac"
+    _gauge_cell "$i" "$ppos" "$tpos" "$gpos" "$color" "$pac"
   done
 }
 
@@ -402,17 +393,19 @@ _gauge_ghost_pos() {
 }
 
 # Dispatch one cell. Priority: pac > ghost > pellet > eaten > edible > dim.
+# Pellet marks local time-elapsed but vanishes once pac has passed it
+# (pac ate it). Cells behind pac are always blank (eaten trail).
 _gauge_cell() {
-  local i=$1 ppos=$2 tpos=$3 gpos=$4 overspend=$5 c=$6 pac=$7
+  local i=$1 ppos=$2 tpos=$3 gpos=$4 c=$5 pac=$6
   if   (( i == ppos )); then
     printf "\033[${c}m%s\033[0m" "$pac"
   elif (( gpos >= 0 && i == gpos )); then
     printf "\033[${c}m%s\033[0m" "$_GHOST"
-  elif (( !overspend && i == tpos )); then
+  elif (( i == tpos && ppos <= tpos )); then
     printf "\033[${c}m%s\033[0m" "$_PELLET"
   elif (( i < ppos )); then
     printf " "
-  elif (( !overspend && i > ppos && i < tpos )); then
+  elif (( i > ppos && i < tpos )); then
     printf "\033[${c}m%s\033[0m" "$_DOT"
   else
     printf "\033[${C_DIM}m%s\033[0m" "$_DOT"
@@ -429,14 +422,14 @@ _gauge_timer_edible() {
   (( pp == w-1 )) || (( tp == w-1 && pp <= tp ))
 }
 
-# Render one full segment: "  <label>┃<gauge><timer>↻"
+# Render one full segment: "  <label>│<gauge><timer>↻"
 window_gauge_segment() {
-  local label=$1 used=$2 target=$3 score=$4 time_left=$5
-  local color tc
-  color=$(score_color "$score")
+  local label=$1 used=$2 target=$3 time_left=$4
+  local pac_color=$5 pac_dir=$6 pac_score=$7
+  local tc
 
   printf "  \033[${C_DIM}m%s%s\033[0m" "$label" "$_BAR"
-  gauge_render "$used" "$target" "$color" "$score"
+  gauge_render "$used" "$target" "$pac_color" "$pac_dir" "$pac_score"
 
   (( time_left <= 0 )) && return
   if _gauge_timer_edible "$used" "$target"; then tc=$C_WHT; else tc=$C_DIM; fi
@@ -664,8 +657,9 @@ main() {
   input_parse
   repo_parse
   model_parse       # must precede ctx_parse (MODEL_is_1m) and model_segment
-  window7_parse     # must precede window5_parse (inheritance) and model_segment
+  window7_parse
   window5_parse
+  pacman_parse      # needs both windows — 5h inherits 7d's bundle when worse
   ctx_parse
   git_parse
 
@@ -675,10 +669,12 @@ main() {
   seg_main+=$(traffic_segment)
 
   if (( W5_present )); then
-    seg_main+=$(window_gauge_segment "5h" "$W5_used" "$W5_target" "$W5_score" "$W5_time_left")
+    seg_main+=$(window_gauge_segment "5h" "$W5_used" "$W5_target" "$W5_time_left" \
+      "$PAC5_color" "$PAC5_dir" "$PAC5_score")
   fi
   if (( W7_present )); then
-    seg_main+=$(window_gauge_segment "7d" "$W7_used" "$W7_target" "$W7_score" "$W7_time_left")
+    seg_main+=$(window_gauge_segment "7d" "$W7_used" "$W7_target" "$W7_time_left" \
+      "$PAC7_color" "$PAC7_dir" "$PAC7_score")
   fi
 
   seg_main+=$(ctx_segment)
