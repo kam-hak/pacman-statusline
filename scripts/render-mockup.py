@@ -30,7 +30,7 @@ CACHE_ROOT = Path.home() / "Library/Caches/pacman-statusline-mockup"
 FAKE_REPO = CACHE_ROOT / "pacman-statusline"
 OUTPUT_SVG = REPO / "assets" / "mockup.svg"
 OUTPUT_PNG = REPO / "assets" / "mockup.png"
-PNG_WIDTH = 1600
+PNG_WIDTH = 3000
 
 H = 18_000        # 5h window (seconds)
 D = 604_800       # 7d window (seconds)
@@ -218,10 +218,7 @@ def build_svg(rows) -> str:
         sys.exit(f"error: font not found at {FONT}")
     font_b64 = base64.b64encode(FONT.read_bytes()).decode()
 
-    # Sized for the widest rendered row through ctx + model + git octocat.
-    # At 20px MesloLGS NF with double-width Nerd glyphs, a full statusline
-    # lands around 1600 px — 1900 leaves a comfortable right margin.
-    width = 1900
+    width = 1400
     height = PAD_Y * 2 + len(rows) * ROW_BLOCK - ROW_GAP
 
     out = [

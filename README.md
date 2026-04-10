@@ -7,16 +7,13 @@ A Pac-Man themed status line for [Claude Code](https://claude.com/claude-code).
 Rate-limit gauges use a Pac-Man metaphor to show where you *should* be in the
 budget window versus where you actually are. Inside each gauge:
 
-- 󰮯 **Pac-man** — your current usage in the window
-- ● **Power pellet** — where you *should* be by now (the target)
-- · **Dots** between pac and the pellet — the budget you still have to "eat"
-- · **Dim dots** past the pellet — anticipated or over-consumed budget
-- 󰊠 **Ghost** — appears behind pac when you're under-spending (use it or
-  lose it), or ahead of pac when you're over-spending (a warning)
-- ↻ **Reset timer** — time until the window refills (e.g. `3h↻`, `4d↻`)
-
-> The glyphs above require a Nerd Font in your browser/terminal. The
-> statusline itself relies on a patched MesloLGS NF (see [Install](#install)).
+- **Pac-man** — your current usage in the window
+- **Power pellet** — where you *should* be by now (the target)
+- **Dots** between pac and the pellet — the budget you still have to "eat"
+- **Dim dots** past the pellet — anticipated or over-consumed budget
+- **Ghost** — appears behind pac when you're under-spending (use it or lose
+  it), or ahead of pac when you're over-spending (a warning)
+- **Reset timer** — time until the window refills (e.g. `3h↻`, `4d↻`)
 
 When you outpace the budget, pac flips around (left-facing) and starts
 retreating past the pellet — the pacing tier escalates from neutral → yellow
