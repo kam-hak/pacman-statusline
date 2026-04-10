@@ -5,23 +5,19 @@ A Pac-Man themed status line for [Claude Code](https://claude.com/claude-code).
 ![pacman-statusline in several pacing states](assets/mockup.png)
 
 Rate-limit gauges use a Pac-Man metaphor to show where you *should* be in the
-budget window versus where you actually are:
+budget window versus where you actually are. Inside each gauge:
 
-```
-5h┃ 󰮯 · · ● · · · · 3h↻   7d┃  󰊠  󰮯 · ● · · · 4d↻   ctx:47%  opus·med
-   │   │  │ │                 │     │                 │        │
-   │   │  │ │                 │     │                 │        └─ model + effort
-   │   │  │ │                 │     │                 └─ context remaining
-   │   │  │ │                 │     └─ pac (you)
-   │   │  │ │                 └─ ghost chasing (underspend — use it or lose it)
-   │   │  │ └─ dim tail (anticipated / overspend)
-   │   │  └─ power pellet (where you should be = target)
-   │   └─ dots (edible budget between you and the pellet)
-   └─ pac-man facing right (eating toward target)
-```
+- **Pac-man** — your current usage in the window
+- **Power pellet** — where you *should* be by now (the target)
+- **Dots** between pac and the pellet — the budget you still have to "eat"
+- **Dim dots** past the pellet — anticipated or over-consumed budget
+- **Ghost** — appears behind pac when you're under-spending (use it or lose
+  it), or ahead of pac when you're over-spending (a warning)
+- **Reset timer** — time until the window refills (e.g. `3h↻`, `4d↻`)
 
-When you outpace the budget, pac flips around (`󰮰`) and starts retreating past
-the pellet. A ghost appears to chase or block based on how bad the pacing is.
+When you outpace the budget, pac flips around (left-facing) and starts
+retreating past the pellet — the pacing tier escalates from neutral → yellow
+→ red as the overspend gets worse.
 
 ## Segments
 
@@ -72,14 +68,13 @@ script live — no copy or symlink required.
 
 ### Font
 
-The right-facing pac-man (`󰮯`, U+F0BAF) and ghost (`󰊠`, U+F02A0) are native
-to Nerd Fonts. The left-facing pac-man does not exist upstream — `install.sh`
-generates it by reflecting U+F0BAF across its advance width and inserting the
-result at a free codepoint picked per-machine (stored in the config above).
-
-Reference glyphs extracted from a live patched font live in `assets/` for
-documentation; the installer reproduces them from scratch and does not
-consume them.
+The right-facing pac-man (U+F0BAF) and ghost (U+F02A0) are native to Nerd
+Fonts. A left-facing pac-man does not exist upstream, so `install.sh`
+generates one by reflecting U+F0BAF across its advance width and inserting
+the result at a free codepoint picked per-machine (recorded in the config
+file above). SVG reference glyphs extracted from a live patched font live
+in `assets/` for documentation; the installer reproduces them from scratch
+and does not consume them.
 
 ## Tests
 
