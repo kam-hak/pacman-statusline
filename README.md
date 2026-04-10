@@ -2,6 +2,8 @@
 
 A Pac-Man themed status line for [Claude Code](https://claude.com/claude-code).
 
+![pacman-statusline in several pacing states](assets/mockup.png)
+
 Rate-limit gauges use a Pac-Man metaphor to show where you *should* be in the
 budget window versus where you actually are:
 

@@ -2,3 +2,7 @@
 *.swp
 *.bak
 *~
+
+# Mockup SVG embeds the full MesloLGS NF font (~3 MB) and is regenerated
+# by scripts/render-mockup.py. Only the rasterized PNG is committed.
+assets/mockup.svg

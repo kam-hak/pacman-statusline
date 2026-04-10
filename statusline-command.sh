@@ -52,7 +52,7 @@ _PAC_L=$'\xf3\xb0\xae\xb0'    # 󰮰 left-facing pac-man (patched in)
 _GHOST=$'\xf3\xb0\x8a\xa0'    # 󰊠 ghost
 _DOT=$'\xc2\xb7'              # · middle dot
 _PELLET=$'\xe2\x97\x8f'       # ● power pellet
-_BAR=$'\xe2\x94\x83'          # ┃ heavy vertical
+_BAR=$'\xe2\x94\x82'          # │ light vertical
 _RESET=$'\xe2\x86\xbb'        # ↻ clockwise open arrow
 _FROWN=$'\xe2\x98\xb9'        # ☹ sad face
 _WT=$'\xe2\x8e\x87'           # ⎇ alternative key (worktree indicator)
@@ -435,7 +435,7 @@ window_gauge_segment() {
   local color tc
   color=$(score_color "$score")
 
-  printf "  %s\033[${C_DIM}m%s\033[0m" "$label" "$_BAR"
+  printf "  \033[${C_DIM}m%s%s\033[0m" "$label" "$_BAR"
   gauge_render "$used" "$target" "$color" "$score"
 
   (( time_left <= 0 )) && return
