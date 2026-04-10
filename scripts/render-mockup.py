@@ -30,7 +30,7 @@ CACHE_ROOT = Path.home() / "Library/Caches/pacman-statusline-mockup"
 FAKE_REPO = CACHE_ROOT / "pacman-statusline"
 OUTPUT_SVG = REPO / "assets" / "mockup.svg"
 OUTPUT_PNG = REPO / "assets" / "mockup.png"
-PNG_WIDTH = 3000  # qlmanage bounding-box size; scaled to fit
+PNG_WIDTH = 1600
 
 H = 18_000        # 5h window (seconds)
 D = 604_800       # 7d window (seconds)
