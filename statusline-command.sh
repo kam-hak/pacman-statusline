@@ -58,6 +58,31 @@ _FROWN=$'\xe2\x98\xb9'        # ☹ sad face
 _WT=$'\xe2\x8e\x87'           # ⎇ alternative key (worktree indicator)
 _OCTO=$'\xef\x84\x93'         #  github octocat (nerd font)
 
+# Optional config override for the left-pac codepoint. install.sh scans the
+# user's patched font for a free PUA slot and writes PAC_L_CODEPOINT here;
+# without a config file we fall back to the hardcoded bytes above.
+_pml_cfg="${XDG_CONFIG_HOME:-$HOME/.config}/pacman-statusline/config"
+if [[ -f "$_pml_cfg" ]]; then
+  # shellcheck source=/dev/null
+  . "$_pml_cfg"
+  if [[ -n "${PAC_L_CODEPOINT:-}" ]]; then
+    _cp=$(( PAC_L_CODEPOINT ))
+    if (( _cp >= 0x10000 )); then
+      # Encode as 4-byte UTF-8. bash 3.2 has no \U escape, so we build the
+      # \xNN sequence with printf and then %b-interpret it into real bytes.
+      _fmt=$(printf '\\x%02x\\x%02x\\x%02x\\x%02x' \
+        $(( 0xF0 | ((_cp >> 18) & 0x07) )) \
+        $(( 0x80 | ((_cp >> 12) & 0x3F) )) \
+        $(( 0x80 | ((_cp >>  6) & 0x3F) )) \
+        $(( 0x80 |  (_cp        & 0x3F) )))
+      _PAC_L=$(printf '%b' "$_fmt")
+      unset _fmt
+    fi
+    unset _cp
+  fi
+fi
+unset _pml_cfg
+
 # ═══════════════════════════════════════════════════════════════════
 # Formatters
 # ═══════════════════════════════════════════════════════════════════

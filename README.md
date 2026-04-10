@@ -36,28 +36,36 @@ repo  branch  traffic  5h-gauge  7d-gauge  ctx  model  [git-stats]
 - **model** — opus/sonnet/haiku tier with escalating alerts when 7d is in danger
 - **git-stats** — dirty counts and diffstat for the current repo (if in one)
 
-## Usage
+## Install
 
-Claude Code reads its status line from `~/.claude/statusline-command.sh`. The
-authoritative source of truth lives in this repo. To wire Claude Code up to
-it, symlink the repo file into place:
+macOS only for now. Requires [`uv`](https://docs.astral.sh/uv/) and `curl`.
 
 ```bash
-ln -sf "$PWD/statusline-command.sh" ~/.claude/statusline-command.sh
+./install.sh
 ```
 
-After that, editing `statusline-command.sh` in this repo changes Claude Code's
-status line immediately on the next render — no copy step.
+The installer:
+
+1. Downloads MesloLGS NF (all 4 weights) into `~/Library/Fonts/` if missing.
+2. Backs up the pristine fonts as `*.ttf.bak`, then patches each with a
+   horizontally-mirrored pac-man glyph inserted at the first free PUA-A
+   codepoint above U+F1000.
+3. Writes the chosen codepoint to `~/.config/pacman-statusline/config`.
+4. Symlinks `~/.claude/statusline-command.sh` at this repo's script so
+   Claude Code reads your edits live.
+
+Restart your terminal afterwards so the patched font reloads.
 
 ### Font
 
-The left-facing pac-man glyph (`󰮰` at U+F0BB0) is a **custom patch** on top of
-MesloLGS NF. Without the patched font, overspend rendering falls back to the
-default glyph at that codepoint (usually `.notdef`). The right-facing pac-man
-(`󰮯`, U+F0BAF) and ghost (`󰊠`, U+F02A0) are native to Nerd Fonts.
+The right-facing pac-man (`󰮯`, U+F0BAF) and ghost (`󰊠`, U+F02A0) are native
+to Nerd Fonts. The left-facing pac-man does not exist upstream — `install.sh`
+generates it by reflecting U+F0BAF across its advance width and inserting the
+result at a free codepoint picked per-machine (stored in the config above).
 
-Patching source (SVG, font-patcher config, etc.) → TBD, drop into `assets/`
-if found.
+Reference glyphs extracted from a live patched font live in `assets/` for
+documentation; the installer reproduces them from scratch and does not
+consume them.
 
 ## Tests
 
