@@ -218,7 +218,7 @@ def build_svg(rows) -> str:
         sys.exit(f"error: font not found at {FONT}")
     font_b64 = base64.b64encode(FONT.read_bytes()).decode()
 
-    width = 1400
+    width = 1060
     height = PAD_Y * 2 + len(rows) * ROW_BLOCK - ROW_GAP
 
     out = [
