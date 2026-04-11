@@ -4,29 +4,29 @@ A Pac-Man themed status line for [Claude Code](https://claude.com/claude-code).
 
 ![pacman-statusline in several pacing states](assets/mockup.png)
 
-Rate-limit gauges use a Pac-Man metaphor to show where you *should* be in the
-budget window versus where you actually are. Inside each gauge:
+A mildy opinionated Pac-man theme for Claude's status line. Designed around two goals:
 
-- **Pac-man** — your current usage in the window
-- **Power pellet** — where you *should* be by now (the target)
-- **Dots** between pac and the pellet — the budget you still have to "eat"
-- **Dim dots** past the pellet — anticipated or over-consumed budget
-- **Ghost** — appears behind pac when you're under-spending (use it or lose
-  it), or ahead of pac when you're over-spending (a warning)
+- Using (eating) weekly quota, but not running out (dying).
+- Staying out of the 'dumb zone' of context with Claude.
+
+Objects:
+
+- **Pac-man** — sits at your current usage in the window
+- **Power pellet** — a burn pacer dot which is the ratio of time elapsed (the target).
+- **Dots** between pac and the pellet, quota budget you can safely munch on. 
+- **Dim dots** past the pellet, anticipated budget beyond the pacer.
+- **Ghost** — appears behind pac when you're under-consuming (move faster), or ahead of pac when you're over-spending (a warning)
 - **Reset timer** — time until the window refills (e.g. `3h↻`, `4d↻`)
 
-When you outpace the budget, pac flips around (left-facing) and starts
-retreating past the pellet — the pacing tier escalates from neutral → yellow
+When you outpace the budget, pac flips around (left-facing) and retreats past the pellet. The pacing tier escalates from neutral → yellow
 → red as the overspend gets worse.
 
-### How the two windows couple
+### 5 hour and 7 day interaction
 
-The 5h and 7d gauges play different roles:
+5 hour and 7 day quotas are distinct. 
 
-- **7d is "use it or lose it".** The weekly budget resets; leaving it on the
-  table is waste. Being *behind* on 7d should feel bad.
-- **5h is a guard rail.** You don't want to burn through it and get locked
-  out. Being *ahead* on 5h should feel bad.
+- **7d "use it or lose it", but resets weekly.** Rules assume you want to burn through it by the end of week.
+- **5h is a guard rail.** You don't want to burn through it and get locked out. Being *ahead* on 5h should feel bad.
 
 7d is fully autonomous. 5h is semi-independent: it can escalate to yellow/red
 on its own when you're overspending the short window, but it can never
@@ -42,18 +42,18 @@ the other.
 repo  branch  traffic  5h-gauge  7d-gauge  ctx  model  [git-stats]
 ```
 
-- **repo** — current directory, colored by a stable hash of the repo name
+- **repo** — current directory, colored by a stable hash of the repo name. CWD if not in a repo.
 - **branch** — yellow for `main`/`master`, cyan for feature branches
-- **traffic** — frown face, brighter during business hours (8am–2pm Mon–Fri)
-- **5h/7d gauge** — asymmetric pacing score, 10-cell pac-man bar + reset timer
-- **ctx** — context window remaining, autocompact-aware, with a quality-budget
-  display for 1M-context models
-- **model** — opus/sonnet/haiku tier with escalating alerts when 7d is in danger
+- **Claude's traffic hours** — frown face, brighter during 'peak' hours (8am–2pm EST, weekdays)
+- **5h/7d gauge** — discussed above, 10-cell pac-man bar + reset timer
+- **ctx** — context window remaining, autocompact-aware, with a quality-budget display for 1M-context models. 
+  - NOTE: this is conservative, and excludes autocompact (so treats 83% of 200k as the context demoninator).
+- **model** — opus/sonnet/haiku tier with escalating alerts when 7d is in danger. Opus turns red if you are outpacing quota.
 - **git-stats** — dirty counts and diffstat for the current repo (if in one)
 
 ## Install
 
-macOS only for now. Requires [`uv`](https://docs.astral.sh/uv/) and `curl`.
+macOS. Requires [`uv`](https://docs.astral.sh/uv/) and `curl`.
 
 **1. Clone the repo and patch the font.**
 
@@ -63,10 +63,10 @@ cd pacman-statusline
 ./install.sh
 ```
 
-Keep the clone somewhere stable — Claude Code will reference
-`statusline-command.sh` from this directory in step 2.
+Keep the clone somewhere stable. Claude Code will reference
+`statusline-command.sh` from the cloned directory in step 2.
 
-The installer:
+The installer is only for one custom font, the reversed Pac who is 'running away'.
 
 - Downloads MesloLGS NF (all 4 weights) into `~/Library/Fonts/` if missing
 - Backs up the pristine fonts as `*.ttf.bak`, then patches each with a
@@ -91,7 +91,7 @@ script live — no copy or symlink required.
 ### Font
 
 The right-facing pac-man (U+F0BAF) and ghost (U+F02A0) are native to Nerd
-Fonts. A left-facing pac-man does not exist upstream, so `install.sh`
+Fonts. A left-facing pac-man does not exist, so `install.sh`
 generates one by reflecting U+F0BAF across its advance width and inserting
 the result at a free codepoint picked per-machine (recorded in the config
 file above). SVG reference glyphs extracted from a live patched font live
