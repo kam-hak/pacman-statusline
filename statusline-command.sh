@@ -336,12 +336,12 @@ pacman_parse() {
 #   · dim dot   — beyond pellet / overspend tail (anticipated)
 #   󰊠 ghost     — chases from behind or blocks ahead, distance by severity
 #
-# Ghost distance rules:
+# Ghost distance rules (monotonic — escalation reinforces color change):
 #   |score| < 6:    no ghost (dead zone, on pace)
-#   green behind:   gap 2..4, hidden beyond
-#   purple behind:  adjacent ok
-#   yellow ahead:   gap ≥1, hidden if adjacent
-#   red ahead:      adjacent ok
+#   green behind:   gap 4 → 3   (score -7 → -20)
+#   purple behind:  gap 3 → 1   (score -21 → -40), smooth handoff from green
+#   yellow ahead:   gap 3 → 1   (score  7 →  15)
+#   red ahead:      adjacent    (score > 15)
 # ═══════════════════════════════════════════════════════════════════
 
 # Stateless: geometry (used/target) from the local window, pacman bundle
@@ -367,22 +367,27 @@ gauge_render() {
 }
 
 # Ghost position by pacing severity. -1 = hidden.
+#
+# Invariant: as |score| grows, the ghost closes in monotonically. On the
+# chasing side (behind pac), the green→purple handoff is continuous — the
+# ghost never resets between bands, so color escalation and distance
+# escalation reinforce each other.
 _gauge_ghost_pos() {
   local ppos=$1 score=$2 width=$3
   local abs=${score#-}
   local gap gpos=-1
 
-  if (( score < -20 )); then
-    gap=$(( 4 - (abs - 20) / 10 ))
+  if   (( score < -20 )); then                    # purple: gap 3 → 1
+    gap=$(( 3 - (abs - 20) / 10 ))
     (( gap < 1 )) && gap=1
     gpos=$(( ppos - gap ))
-  elif (( score < -6 )); then
-    gap=$(( 2 + (abs - 6) / 5 ))
-    (( gap > 4 )) && { echo -1; return; }
+  elif (( score <  -6 )); then                    # green:  gap 4 → 3
+    gap=$(( 4 - (abs -  7) /  7 ))
+    (( gap < 3 )) && gap=3
     gpos=$(( ppos - gap ))
-  elif (( score > 15 )); then
+  elif (( score >  15 )); then                    # red:    adjacent
     gpos=$(( ppos + 1 ))
-  elif (( score > 6 )); then
+  elif (( score >   6 )); then                    # yellow: gap 3 → 1
     gap=$(( 3 - (score - 6) / 4 ))
     (( gap < 1 )) && gap=1
     gpos=$(( ppos + gap ))
