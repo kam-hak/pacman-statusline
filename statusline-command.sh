@@ -555,6 +555,8 @@ model_parse() {
     low)    MODEL_effort="lo"  ;;
     medium) MODEL_effort="med" ;;
     high)   MODEL_effort="hi"  ;;
+    xhigh)  MODEL_effort="xhi" ;;
+    max)    MODEL_effort="max" ;;
     *)      MODEL_effort=""    ;;
   esac
 }
