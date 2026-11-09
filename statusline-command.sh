@@ -383,7 +383,7 @@ cache_segment() {
   elif (( CACHE_left <= CACHE_T_blue )); then
     printf "  \033[1;38;5;39m%s\033[0m \033[1;${C_BRT}m%dm\033[0m" "$_CUP" "$mins"
   elif (( CACHE_left <= CACHE_T_amber )); then
-    printf "  \033[38;5;214m%s\033[0m \033[${C_DIM}m%dm\033[0m" "$_CUP" "$mins"
+    printf "  \033[38;5;178m%s\033[0m \033[${C_DIM}m%dm\033[0m" "$_CUP" "$mins"
   else
     printf "  \033[38;5;136m%s\033[0m \033[${C_DIM}m%dm\033[0m" "$_CUP" "$mins"
   fi
