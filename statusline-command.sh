@@ -1,67 +1,29 @@
 #!/usr/bin/env bash
-# Claude Code status line — Pac-Man edition
-#
-# Segments: location  branch  traffic  5h-gauge  7d-gauge  ctx  model  [git]
-#
-# Structure (read top → bottom):
-#   Constants   — colors, tiers, glyphs
-#   Formatters  — ftime
-#   Tier        — pacing score → semantic tier → ANSI color
-#   Input       — parse JSON once, narrow into IN_* state
-#   Repo        — location, branch, hashed color
-#   Traffic     — business-hours frown
-#   Window      — PacingWindow: used/target/score per window
-#   Pacman      — score/color/direction bundle; 5h inherits 7d when worse
-#   Gauge       — pac-man bar renderer (stateless, takes geometry + pacman)
-#   Context     — autocompact-aware meter + quality-budget
-#   Model       — tier + 1M + effort, with opus 7d-pacing alerts
-#   Git         — dirty counts + diffstat
-#   main        — parse → compute → render
-#
-# Each "type" owns a namespaced state prefix (REPO_*, W5_*, W7_*, CTX_*, MODEL_*,
-# GIT_*) and a small family of functions. Downstream code reads the typed state,
-# never the raw JSON. Complex logic (window5 adjustments, gauge cell dispatch)
-# is broken into named helpers, one concern each.
-#
-# Requires: MesloLGS NF patched with left-facing pac-man at U+F0BB0.
 
 input=$(cat)
-echo "$input" > /tmp/claude-sl-debug.json
 
-# ═══════════════════════════════════════════════════════════════════
-# Constants
-# ═══════════════════════════════════════════════════════════════════
+C_PUR="38;5;99"
+C_GRN=32
+C_WHT=37
+C_YEL=33
+C_RED=31
+C_DIM=90
+C_BRT=97
+C_CYN=36
 
-# ANSI color codes
-C_PUR="38;5;99"   # purple — YOLO, way behind
-C_GRN=32          # green  — headroom
-C_WHT=37          # white  — on track
-C_YEL=33          # yellow — outpacing / main branch
-C_RED=31          # red    — danger
-C_DIM=90          # dim gray
-C_BRT=97          # bright white
-C_CYN=36          # cyan   — feature branches
-
-# Semantic tiers (ascending: worst → best).
-# Positive states (underspending): T_NEUTRAL → T_GREEN → T_PURPLE
-# Negative states (overspending):  T_NEUTRAL → T_YELLOW → T_RED
 T_RED=0; T_YELLOW=1; T_NEUTRAL=2; T_GREEN=3; T_PURPLE=4
 
-# Glyphs (UTF-8 bytes)
-_PAC_R=$'\xf3\xb0\xae\xaf'    # 󰮯 right-facing pac-man
-_PAC_L=$'\xf3\xb0\xae\xb0'    # 󰮰 left-facing pac-man (patched in)
-_GHOST=$'\xf3\xb0\x8a\xa0'    # 󰊠 ghost
-_DOT=$'\xc2\xb7'              # · middle dot
-_PELLET=$'\xe2\x97\x8f'       # ● power pellet
-_BAR=$'\xe2\x94\x82'          # │ light vertical
-_RESET=$'\xe2\x86\xbb'        # ↻ clockwise open arrow
-_FROWN=$'\xe2\x98\xb9'        # ☹ sad face
-_WT=$'\xe2\x8e\x87'           # ⎇ alternative key (worktree indicator)
-_OCTO=$'\xef\x84\x93'         #  github octocat (nerd font)
+_PAC_R=$'\xf3\xb0\xae\xaf'
+_PAC_L=$'\xf3\xb0\xae\xb0'
+_GHOST=$'\xf3\xb0\x8a\xa0'
+_DOT=$'\xc2\xb7'
+_PELLET=$'\xe2\x97\x8f'
+_BAR=$'\xe2\x94\x82'
+_RESET=$'\xe2\x86\xbb'
+_CUP=$'\xf3\xb0\x85\xb6'
+_WT=$'\xe2\x8e\x87'
+_OCTO=$'\xef\x84\x93'
 
-# Optional config override for the left-pac codepoint. install.sh scans the
-# user's patched font for a free PUA slot and writes PAC_L_CODEPOINT here;
-# without a config file we fall back to the hardcoded bytes above.
 _pml_cfg="${XDG_CONFIG_HOME:-$HOME/.config}/pacman-statusline/config"
 if [[ -f "$_pml_cfg" ]]; then
   # shellcheck source=/dev/null
@@ -69,8 +31,6 @@ if [[ -f "$_pml_cfg" ]]; then
   if [[ -n "${PAC_L_CODEPOINT:-}" ]]; then
     _cp=$(( PAC_L_CODEPOINT ))
     if (( _cp >= 0x10000 )); then
-      # Encode as 4-byte UTF-8. bash 3.2 has no \U escape, so we build the
-      # \xNN sequence with printf and then %b-interpret it into real bytes.
       _fmt=$(printf '\\x%02x\\x%02x\\x%02x\\x%02x' \
         $(( 0xF0 | ((_cp >> 18) & 0x07) )) \
         $(( 0x80 | ((_cp >> 12) & 0x3F) )) \
@@ -84,11 +44,6 @@ if [[ -f "$_pml_cfg" ]]; then
 fi
 unset _pml_cfg
 
-# ═══════════════════════════════════════════════════════════════════
-# Formatters
-# ═══════════════════════════════════════════════════════════════════
-
-# Format seconds into compact 2-char time: 42m, 3h, 6d. Rounds at .5.
 ftime() {
   local s=$1
   if   (( s <= 0 ));    then echo "now"
@@ -97,10 +52,6 @@ ftime() {
   else                       echo "$(( (s + 43200) / 86400 ))d"
   fi
 }
-
-# ═══════════════════════════════════════════════════════════════════
-# Tier: pacing score → semantic tier → ANSI color
-# ═══════════════════════════════════════════════════════════════════
 
 tier_of() {
   local score=$1
@@ -124,31 +75,33 @@ tier_color() {
 
 score_color() { tier_color "$(tier_of "$1")"; }
 
-# ═══════════════════════════════════════════════════════════════════
-# Input: parse JSON once, narrow into IN_* state
-# ═══════════════════════════════════════════════════════════════════
-
-IN_cwd=""; IN_rl5_used=""; IN_rl5_reset=""; IN_rl7_used=""; IN_rl7_reset=""
-IN_ctx=""; IN_model_name=""; IN_effort=""; IN_autocompact=""; IN_now=0
+IN_cwd=""; IN_rl7_used=""; IN_rl7_reset=""
+IN_ctx=""; IN_ctx_size=""; IN_model_id=""; IN_model_name=""; IN_effort=""
+IN_cache_seen=""; IN_cache_warm=""; IN_cache_ttl=""; IN_cache_expires=""
+IN_autocompact=""; IN_now=0
 
 input_parse() {
-  IN_cwd=$(echo "$input" | jq -r '.workspace.current_dir // .cwd // ""')
-  IN_rl5_used=$(echo "$input" | jq -r '.rate_limits.five_hour.used_percentage // empty' 2>/dev/null)
-  IN_rl5_reset=$(echo "$input" | jq -r '.rate_limits.five_hour.resets_at // empty' 2>/dev/null)
-  IN_rl7_used=$(echo "$input" | jq -r '.rate_limits.seven_day.used_percentage // empty' 2>/dev/null)
-  IN_rl7_reset=$(echo "$input" | jq -r '.rate_limits.seven_day.resets_at // empty' 2>/dev/null)
-  IN_ctx=$(echo "$input" | jq -r '.context_window.remaining_percentage // empty' 2>/dev/null)
-  IN_model_name=$(echo "$input" | jq -r '.model.display_name // ""' 2>/dev/null)
-  IN_effort=$(jq -r '.effortLevel // ""' "$HOME/.claude/settings.json" 2>/dev/null)
+  IFS=$'\x1f' read -r IN_cwd IN_rl7_used IN_rl7_reset IN_ctx IN_ctx_size \
+    IN_model_id IN_model_name IN_effort \
+    IN_cache_seen IN_cache_warm IN_cache_ttl IN_cache_expires \
+    < <(echo "$input" | jq -r '[
+      (.workspace.current_dir // .cwd // ""),
+      (.rate_limits.seven_day.used_percentage // ""),
+      (.rate_limits.seven_day.resets_at // ""),
+      (.context_window.remaining_percentage // ""),
+      (.context_window.context_window_size // ""),
+      (.model.id // ""),
+      (.model.display_name // ""),
+      (.effort.level // ""),
+      (.prompt_cache.caching_observed // ""),
+      (.prompt_cache.warm // ""),
+      (.prompt_cache.ttl // ""),
+      (.prompt_cache.expires_at // "")
+    ] | map(tostring) | join("\u001f")' 2>/dev/null)
   IN_autocompact=$(jq -r '.autoCompact // "unset"' "$HOME/.claude/settings.json" 2>/dev/null)
   IN_now=$(date +%s)
 }
 
-# ═══════════════════════════════════════════════════════════════════
-# Repo: location + branch + hashed color
-# ═══════════════════════════════════════════════════════════════════
-
-# Stable hash → one of 16 visually distinct 256-colors. Same repo → same color.
 _REPO_COLORS=(196 202 214 226 154 46 48 51 45 39 33 99 129 163 198 205)
 
 REPO_root=""; REPO_name=""; REPO_branch=""; REPO_location=""; REPO_color=0
@@ -166,7 +119,6 @@ repo_parse() {
   REPO_color=$(_repo_color_hash "${REPO_name:-$REPO_location}")
 }
 
-# "reponame/a/b/leaf" — intermediate dirs abbreviated to first char, leaf full.
 _repo_compact_path() {
   local cwd=$1 root=$2 name=$3
   local rel="${cwd#$root}"
@@ -193,7 +145,6 @@ repo_segment_location() {
   printf "\033[38;5;%dm%s\033[0m" "$REPO_color" "$REPO_location"
 }
 
-# Yellow for main/master (safe trunk), cyan for feature branches.
 repo_segment_branch() {
   [ -z "$REPO_branch" ] && return
   case "$REPO_branch" in
@@ -202,38 +153,8 @@ repo_segment_branch() {
   esac
 }
 
-# ═══════════════════════════════════════════════════════════════════
-# Traffic: business-hours frown (8am–2pm Mon–Fri)
-# ═══════════════════════════════════════════════════════════════════
-
-traffic_segment() {
-  local hour dow color
-  hour=$(date +%H)
-  dow=$(date +%u)
-  if (( 10#$dow >= 1 && 10#$dow <= 5 )) && (( 10#$hour >= 8 && 10#$hour < 14 )); then
-    color="38;5;172"   # muted orange
-  else
-    color="$C_DIM"
-  fi
-  printf " \033[${color}m%s\033[0m" "$_FROWN"
-}
-
-# ═══════════════════════════════════════════════════════════════════
-# Window: asymmetric pacing over a rolling window
-#
-# Per-window state: W{5,7}_{used,target,time_left,score,present}
-# Downstream code (gauge, model alerts) reads these fields directly.
-# Raw used_percentage/reset_at stays trapped inside window*_parse.
-# ═══════════════════════════════════════════════════════════════════
-
-W5_used=0; W5_target=0; W5_time_left=0; W5_score=0; W5_present=0
 W7_used=0; W7_target=0; W7_time_left=0; W7_score=0; W7_present=0
 
-# Core pacing calculation.
-# Asymmetric amp — overspending is worst early (compounds), underspending is
-# worst late (wasting). Squared curve: gentle midwindow, sharp at extremes.
-# args: used% reset_ts window_size_secs
-# echoes: "score target time_left"
 _window_compute() {
   local u=$1 reset=$2 ws=$3
   local tl=$(( reset - IN_now ))
@@ -255,8 +176,6 @@ _window_compute() {
   echo "$score $target $tl"
 }
 
-# ─── Window7d: simple compute, no adjustments ───
-
 window7_parse() {
   if [ -z "$IN_rl7_used" ] || [ "$IN_rl7_used" = "null" ]; then return; fi
   W7_present=1
@@ -266,87 +185,21 @@ window7_parse() {
     <<< "$(_window_compute "$W7_used" "$IN_rl7_reset" 604800)"
 }
 
-# ─── Window5h: simple compute, identical shape to 7d ───
-#
-# 5h and 7d compute independently here. Their interaction lives in the
-# Pacman layer (below): 5h inherits 7d's pacman-bundle when 7d is worse.
-# This window owns only the local geometry (used + target = time elapsed).
-
-window5_parse() {
-  if [ -z "$IN_rl5_used" ] || [ "$IN_rl5_used" = "null" ]; then return; fi
-  W5_present=1
-  W5_used=$(printf '%.0f' "$IN_rl5_used" 2>/dev/null) || W5_used=0
-  if [ -z "$IN_rl5_reset" ] || [ "$IN_rl5_reset" = "null" ]; then return; fi
-  read -r W5_score W5_target W5_time_left \
-    <<< "$(_window_compute "$W5_used" "$IN_rl5_reset" 18000)"
-}
-
-# ═══════════════════════════════════════════════════════════════════
-# Pacman: the agent in each gauge
-#
-# Bundles score → tier → color → direction so they move as one unit and
-# can never disagree. The 5h bundle inherits 7d's wholesale when 7d is
-# worse (PAC7_score > PAC5_score): 5h is a guard rail that defers to
-# 7d's use-it-or-lose-it pressure whenever 7d would show a worse state.
-#
-# Geometry (pellet + pac position in the bar) is NOT inherited — that
-# stays driven by each window's own used/target so the pellet always
-# marks local time-elapsed.
-# ═══════════════════════════════════════════════════════════════════
-
-PAC5_score=0; PAC5_color=$C_WHT; PAC5_dir=$_PAC_R
 PAC7_score=0; PAC7_color=$C_WHT; PAC7_dir=$_PAC_R
 
-# Yellow/red → retreating (left). Neutral/green/purple → advancing (right).
 _pacman_dir_for_tier() {
   (( $1 <= T_YELLOW )) && echo "$_PAC_L" || echo "$_PAC_R"
 }
 
 pacman_parse() {
-  local t5 t7
-  if (( W7_present )); then
-    PAC7_score=$W7_score
-    t7=$(tier_of "$W7_score")
-    PAC7_color=$(tier_color "$t7")
-    PAC7_dir=$(_pacman_dir_for_tier "$t7")
-  fi
-  if (( W5_present )); then
-    PAC5_score=$W5_score
-    t5=$(tier_of "$W5_score")
-    PAC5_color=$(tier_color "$t5")
-    PAC5_dir=$(_pacman_dir_for_tier "$t5")
-  fi
-
-  # 5h inherits 7d's bundle when 7d is worse. Full copy — score, color, dir.
-  if (( W5_present && W7_present && PAC7_score > PAC5_score )); then
-    PAC5_score=$PAC7_score
-    PAC5_color=$PAC7_color
-    PAC5_dir=$PAC7_dir
-  fi
+  local t7
+  (( W7_present )) || return
+  PAC7_score=$W7_score
+  t7=$(tier_of "$W7_score")
+  PAC7_color=$(tier_color "$t7")
+  PAC7_dir=$(_pacman_dir_for_tier "$t7")
 }
 
-# ═══════════════════════════════════════════════════════════════════
-# Gauge: pac-man pacing bar (10 cells)
-#
-# Actors:
-#   󰮯 pac right — eating toward target (underspend/on pace)
-#   󰮰 pac left  — retreating past target (overspend)
-#   ● pellet    — target position (hidden when overspent)
-#   · dot       — between pac and pellet (edible, in pac's color)
-#   · dim dot   — beyond pellet / overspend tail (anticipated)
-#   󰊠 ghost     — chases from behind or blocks ahead, distance by severity
-#
-# Ghost distance rules (monotonic — escalation reinforces color change):
-#   |score| < 6:    no ghost (dead zone, on pace)
-#   green behind:   gap 4 → 3   (score -7 → -20)
-#   purple behind:  gap 3 → 1   (score -21 → -40), smooth handoff from green
-#   yellow ahead:   gap 3 → 1   (score  7 →  15)
-#   red ahead:      adjacent    (score > 15)
-# ═══════════════════════════════════════════════════════════════════
-
-# Stateless: geometry (used/target) from the local window, pacman bundle
-# (color/dir/score) passed in explicitly so 5h can render with an inherited
-# 7d bundle while keeping its own pellet position.
 gauge_render() {
   local used=$1 target=$2 color=$3 pac=$4 score=$5 width=${6:-10}
 
@@ -366,28 +219,22 @@ gauge_render() {
   done
 }
 
-# Ghost position by pacing severity. -1 = hidden.
-#
-# Invariant: as |score| grows, the ghost closes in monotonically. On the
-# chasing side (behind pac), the green→purple handoff is continuous — the
-# ghost never resets between bands, so color escalation and distance
-# escalation reinforce each other.
 _gauge_ghost_pos() {
   local ppos=$1 score=$2 width=$3
   local abs=${score#-}
   local gap gpos=-1
 
-  if   (( score < -20 )); then                    # purple: gap 3 → 1
+  if   (( score < -20 )); then
     gap=$(( 3 - (abs - 20) / 10 ))
     (( gap < 1 )) && gap=1
     gpos=$(( ppos - gap ))
-  elif (( score <  -6 )); then                    # green:  gap 4 → 3
+  elif (( score <  -6 )); then
     gap=$(( 4 - (abs -  7) /  7 ))
     (( gap < 3 )) && gap=3
     gpos=$(( ppos - gap ))
-  elif (( score >  15 )); then                    # red:    adjacent
+  elif (( score >  15 )); then
     gpos=$(( ppos + 1 ))
-  elif (( score >   6 )); then                    # yellow: gap 3 → 1
+  elif (( score >   6 )); then
     gap=$(( 3 - (score - 6) / 4 ))
     (( gap < 1 )) && gap=1
     gpos=$(( ppos + gap ))
@@ -397,9 +244,6 @@ _gauge_ghost_pos() {
   echo "$gpos"
 }
 
-# Dispatch one cell. Priority: pac > ghost > pellet > eaten > edible > dim.
-# Pellet marks local time-elapsed but vanishes once pac has passed it
-# (pac ate it). Cells behind pac are always blank (eaten trail).
 _gauge_cell() {
   local i=$1 ppos=$2 tpos=$3 gpos=$4 c=$5 pac=$6
   if   (( i == ppos )); then
@@ -417,7 +261,6 @@ _gauge_cell() {
   fi
 }
 
-# Is the last gauge cell occupied by pac or pellet? Timer text brightens when so.
 _gauge_timer_edible() {
   local used=$1 target=$2 w=10
   local pp=$(( used * w / 100 ))
@@ -427,7 +270,6 @@ _gauge_timer_edible() {
   (( pp == w-1 )) || (( tp == w-1 && pp <= tp ))
 }
 
-# Render one full segment: "  <label>│<gauge><timer>↻"
 window_gauge_segment() {
   local label=$1 used=$2 target=$3 time_left=$4
   local pac_color=$5 pac_dir=$6 pac_score=$7
@@ -441,17 +283,6 @@ window_gauge_segment() {
   printf "\033[${tc}m%s%s\033[0m" "$(ftime $time_left)" "$_RESET"
 }
 
-# ═══════════════════════════════════════════════════════════════════
-# Context: autocompact-aware meter + quality-budget display
-#
-# Two numbers:
-#   CTX_effective — autocompact-scaled (0% = compaction fires)
-#   CTX_budget    — quality budget (0% = past degradation threshold)
-#
-# 200K models: threshold = total, so CTX_budget == CTX_effective.
-# 1M models:   threshold = 350K, so CTX_budget counts against quality zone.
-# ═══════════════════════════════════════════════════════════════════
-
 CTX_present=0; CTX_raw=0; CTX_effective=0; CTX_budget=0
 
 ctx_parse() {
@@ -462,18 +293,14 @@ ctx_parse() {
   CTX_budget=$(_ctx_quality_budget "$CTX_raw")
 }
 
-# Autocompact defaults ON unless explicitly false in settings.json.
 _ctx_autocompact_on() {
   [ "$IN_autocompact" != "false" ]
 }
 
-# 200K models reserve 15% for compaction; 1M models reserve 17%.
 _ctx_compact_buffer() {
   if $MODEL_is_1m; then echo 17; else echo 15; fi
 }
 
-# Rescale raw ctx% so compaction boundary reads as 0%.
-# effective = (raw - buffer) / (100 - buffer) * 100, clamped [0,100].
 _ctx_autocompact_scale() {
   local raw=$1
   _ctx_autocompact_on || { echo "$raw"; return; }
@@ -485,9 +312,6 @@ _ctx_autocompact_scale() {
   echo "$ci"
 }
 
-# Quality budget: tokens used vs degradation threshold.
-# 200K models: threshold equals total, so budget == effective (familiar number).
-# 1M models:   threshold is 350K, budget goes negative past that.
 _ctx_quality_budget() {
   local raw=$1
   if ! $MODEL_is_1m; then
@@ -499,31 +323,28 @@ _ctx_quality_budget() {
   echo $(( (thresh_K - used_K) * 100 / thresh_K ))
 }
 
-# Smooth green→orange→red gradient. Solid green above 50%, ease-in toward
-# vivid orange (skips chartreuse/dirty-yellow), then orange→red below 20%.
 _ctx_gradient() {
   local pct=$1 r g b t tf
   (( pct > 100 )) && pct=100
   (( pct <   0 )) && pct=0
 
   if (( pct >= 50 )); then
-    r=34; g=197; b=94                       # solid green — no drift
+    r=34; g=197; b=94
   elif (( pct >= 20 )); then
-    t=$(( (50 - pct) * 100 / 30 ))          # 0 at 50, 100 at 20
-    tf=$(( t * (200 - t) / 100 ))           # ease-in curve
-    r=$(( 34  + 200 * tf / 100 ))           # 34  → 234  green→orange
-    g=$(( 197 - 109 * tf / 100 ))           # 197 → 88
-    b=$(( 94  -  82 * tf / 100 ))           # 94  → 12
+    t=$(( (50 - pct) * 100 / 30 ))
+    tf=$(( t * (200 - t) / 100 ))
+    r=$(( 34  + 200 * tf / 100 ))
+    g=$(( 197 - 109 * tf / 100 ))
+    b=$(( 94  -  82 * tf / 100 ))
   else
-    t=$(( (20 - pct) * 100 / 20 ))          # 0 at 20, 100 at 0
-    r=$(( 234 -  15 * t / 100 ))            # 234 → 219  orange→red
-    g=$(( 88  -  20 * t / 100 ))            # 88  → 68
-    b=$(( 12  +  56 * t / 100 ))            # 12  → 68
+    t=$(( (20 - pct) * 100 / 20 ))
+    r=$(( 234 -  15 * t / 100 ))
+    g=$(( 88  -  20 * t / 100 ))
+    b=$(( 12  +  56 * t / 100 ))
   fi
   printf "38;2;%d;%d;%d" "$r" "$g" "$b"
 }
 
-# Bright red when autocompact is imminent (effective ≤10), else gradient.
 ctx_segment() {
   (( CTX_present )) || return
   if (( CTX_effective <= 10 )); then
@@ -533,49 +354,76 @@ ctx_segment() {
   fi
 }
 
-# ═══════════════════════════════════════════════════════════════════
-# Model: tier + 1M + effort, with opus 7d-pacing alerts
-#
-# Opus eats weekly quota fast, so it gets escalating alerts tied to 7d:
-#   amber   = default (opus is always worth watching)
-#   red     = overpacing after day 1 (W7_time_left < 6d)
-#   red+!!  = 7d is itself red — stop or downmodel
-# ═══════════════════════════════════════════════════════════════════
+CACHE_present=0; CACHE_warm=0; CACHE_left=0
+CACHE_T_amber=1800; CACHE_T_alert=600; CACHE_T_block=120
+
+cache_parse() {
+  [ "$IN_cache_seen" = "true" ] || return
+  CACHE_present=1
+  [ "$IN_cache_warm" = "true" ] || return
+  [[ "$IN_cache_expires" =~ ^[0-9]+$ ]] || return
+  CACHE_left=$(( IN_cache_expires - IN_now ))
+  (( CACHE_left > 0 )) && CACHE_warm=1
+  if [ "$IN_cache_ttl" = "5m" ]; then
+    CACHE_T_amber=180; CACHE_T_alert=90; CACHE_T_block=30
+  fi
+}
+
+cache_segment() {
+  (( CACHE_present )) || return
+  if (( ! CACHE_warm )); then
+    printf "  \033[${C_DIM}m%s\033[0m" "$_CUP"
+    return
+  fi
+  local mins=$(( CACHE_left / 60 ))
+  if   (( CACHE_left <= CACHE_T_block )); then
+    printf "  \033[1;97;48;5;27m %s %dm \033[0m\033[${C_RED}m!!\033[0m" "$_CUP" "$mins"
+  elif (( CACHE_left <= CACHE_T_alert )); then
+    printf "  \033[1;38;5;39m%s\033[0m \033[1;${C_BRT}m%dm\033[0m\033[${C_RED}m!!\033[0m" "$_CUP" "$mins"
+  elif (( CACHE_left <= CACHE_T_amber )); then
+    printf "  \033[38;5;208m%s\033[0m \033[${C_DIM}m%dm\033[0m" "$_CUP" "$mins"
+  else
+    printf "  \033[38;5;136m%s\033[0m \033[${C_DIM}m%dm\033[0m" "$_CUP" "$mins"
+  fi
+}
 
 MODEL_name=""; MODEL_tier=""; MODEL_effort=""; MODEL_is_1m=false
 
 model_parse() {
   MODEL_name="$IN_model_name"
-  MODEL_tier=$(echo "$MODEL_name" | tr '[:upper:]' '[:lower:]' | awk '{print $1}')
+  local key; key=$(printf '%s %s' "$IN_model_id" "$IN_model_name" | tr '[:upper:]' '[:lower:]')
+  case "$key" in
+    *fable*)  MODEL_tier=fable  ;;
+    *opus*)   MODEL_tier=opus   ;;
+    *sonnet*) MODEL_tier=sonnet ;;
+    *haiku*)  MODEL_tier=haiku  ;;
+    *)        MODEL_tier=$(echo "$key" | awk '{print $1}') ;;
+  esac
   MODEL_is_1m=false
-  if echo "$MODEL_name" | grep -qi "1m\|1 m\|million"; then
-    MODEL_is_1m=true
-  fi
+  [[ "$IN_ctx_size" =~ ^[0-9]+$ ]] && (( IN_ctx_size >= 1000000 )) && MODEL_is_1m=true
   case "$IN_effort" in
     low)    MODEL_effort="lo"  ;;
     medium) MODEL_effort="med" ;;
     high)   MODEL_effort="hi"  ;;
     xhigh)  MODEL_effort="xhi" ;;
     max)    MODEL_effort="max" ;;
-    *)      MODEL_effort=""    ;;
+    *)      MODEL_effort="${IN_effort:0:3}" ;;
   esac
 }
 
 _model_color_code() {
+  (( W7_score > 15 )) && { echo 196; return; }
   case "$MODEL_tier" in
-    opus)
-      if   (( W7_score > 15 )); then echo 196
-      elif (( W7_score > 0 && W7_time_left < 518400 )); then echo 196
-      else echo 214
-      fi ;;
-    sonnet) echo 75  ;;   # periwinkle
-    haiku)  echo 71  ;;   # muted green
-    *)      echo 245 ;;   # gray
+    fable)  echo 177 ;;
+    opus)   echo 214 ;;
+    sonnet) echo 75  ;;
+    haiku)  echo 71  ;;
+    *)      echo 245 ;;
   esac
 }
 
 _model_alert() {
-  [[ "$MODEL_tier" == "opus" ]] && (( W7_score > 15 )) && printf "!!"
+  (( W7_score > 15 )) && printf "!!"
 }
 
 model_segment() {
@@ -585,10 +433,6 @@ model_segment() {
   $MODEL_is_1m && printf "\033[38;5;%dm·1m\033[0m" "$c"
   [ -n "$MODEL_effort" ] && printf "\033[${C_DIM}m·%s\033[0m" "$MODEL_effort"
 }
-
-# ═══════════════════════════════════════════════════════════════════
-# Git: dirty counts + diffstat (only inside a repo)
-# ═══════════════════════════════════════════════════════════════════
 
 GIT_present=0; GIT_worktree_linked=0
 GIT_modified=0; GIT_untracked=0
@@ -602,7 +446,6 @@ git_parse() {
   _git_parse_diffstat
 }
 
-# ⎇ only when in a linked worktree (not the main checkout).
 _git_parse_worktree() {
   local main_wt
   main_wt=$(git -C "$IN_cwd" -c gc.auto=0 worktree list --porcelain 2>/dev/null \
@@ -610,7 +453,6 @@ _git_parse_worktree() {
   [ -n "$main_wt" ] && [ "$REPO_root" != "$main_wt" ] && GIT_worktree_linked=1
 }
 
-# !N = modified/staged, ?N = untracked (mirrors p10k).
 _git_parse_dirty() {
   local status line x y
   status=$(git -C "$IN_cwd" -c gc.auto=0 status --porcelain 2>/dev/null)
@@ -625,14 +467,13 @@ _git_parse_dirty() {
   done <<< "$status"
 }
 
-# Nf +N -N — how big is the uncommitted changeset vs HEAD?
 _git_parse_diffstat() {
   local numstat a d f
   numstat=$(git -C "$IN_cwd" -c gc.auto=0 diff HEAD --numstat 2>/dev/null)
   [ -z "$numstat" ] && return
   while IFS=$'\t' read -r a d f; do
     [ -z "$a" ] && continue
-    [[ "$a" == "-" ]] && continue   # skip binary
+    [[ "$a" == "-" ]] && continue
     ((GIT_nfiles++))
     ((GIT_ins += a))
     ((GIT_del += d))
@@ -652,39 +493,27 @@ git_segment() {
   fi
 }
 
-# ═══════════════════════════════════════════════════════════════════
-# main: parse → compute → render
-#
-# Claude Code doesn't expose terminal width to statusline commands
-# (tput/stty/COLUMNS all fail or return 80), so we just output inline
-# and let the terminal wrap naturally.
-# ═══════════════════════════════════════════════════════════════════
-
 main() {
   input_parse
   repo_parse
-  model_parse       # must precede ctx_parse (MODEL_is_1m) and model_segment
+  model_parse
   window7_parse
-  window5_parse
-  pacman_parse      # needs both windows — 5h inherits 7d's bundle when worse
+  pacman_parse
   ctx_parse
+  cache_parse
   git_parse
 
   local seg_main=""
   seg_main+=$(repo_segment_location)
   seg_main+=$(repo_segment_branch)
-  seg_main+=$(traffic_segment)
 
-  if (( W5_present )); then
-    seg_main+=$(window_gauge_segment "5h" "$W5_used" "$W5_target" "$W5_time_left" \
-      "$PAC5_color" "$PAC5_dir" "$PAC5_score")
-  fi
   if (( W7_present )); then
     seg_main+=$(window_gauge_segment "7d" "$W7_used" "$W7_target" "$W7_time_left" \
       "$PAC7_color" "$PAC7_dir" "$PAC7_score")
   fi
 
   seg_main+=$(ctx_segment)
+  seg_main+=$(cache_segment)
   seg_main+=$(model_segment)
 
   printf '%s' "$seg_main"

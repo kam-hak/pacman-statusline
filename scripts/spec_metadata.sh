@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Collect metadata
 DATETIME_TZ=$(date '+%Y-%m-%d %H:%M:%S %Z')
 FILENAME_TS=$(date '+%Y-%m-%d_%H-%M-%S')
 
@@ -17,7 +16,6 @@ else
   GIT_COMMIT=""
 fi
 
-# Optional: thoughts system status for breadcrumb/orientation data.
 THOUGHTS_STATUS=""
 if [ -n "${REPO_ROOT}" ] && command -v humanlayer >/dev/null 2>&1; then
   THOUGHTS_STATUS=$(
@@ -26,7 +24,6 @@ if [ -n "${REPO_ROOT}" ] && command -v humanlayer >/dev/null 2>&1; then
   )
 fi
 
-# Print similar to the individual command outputs
 echo "Current Date/Time (TZ): $DATETIME_TZ"
 [ -n "$GIT_COMMIT" ] && echo "Current Git Commit Hash: $GIT_COMMIT"
 [ -n "$GIT_BRANCH" ] && echo "Current Branch Name: $GIT_BRANCH"

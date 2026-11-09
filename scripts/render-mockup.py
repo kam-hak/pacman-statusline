@@ -1,17 +1,4 @@
 #!/usr/bin/env python3
-"""Render pacman-statusline in several states as a single SVG mockup.
-
-Runs ``statusline-command.sh`` against a throwaway ``pacman-statusline``
-git repo with synthetic JSON fixtures covering the interesting visual
-states (normal, under-pacing, overspend, sprint, 1M context, opus alert),
-then parses the ANSI output and emits an SVG with one row per state.
-
-MesloLGS NF Regular is embedded as base64 so the Nerd Font glyphs render
-for anyone viewing the SVG without the font installed locally.
-
-Run via ``uv run python3 scripts/render-mockup.py`` — no third-party deps.
-Output: ``assets/mockup.svg``.
-"""
 from __future__ import annotations
 
 import base64
@@ -32,11 +19,8 @@ OUTPUT_SVG = REPO / "assets" / "mockup.svg"
 OUTPUT_PNG = REPO / "assets" / "mockup.png"
 PNG_WIDTH = 3000
 
-H = 18_000        # 5h window (seconds)
-D = 604_800       # 7d window (seconds)
+D = 604_800
 
-
-# ─── fake repo setup ────────────────────────────────────────────────────────
 
 def setup_fake_repo() -> str:
     if FAKE_REPO.exists():
@@ -53,7 +37,6 @@ def setup_fake_repo() -> str:
         ["git", "commit", "-q", "--allow-empty", "-m", "init"],
         cwd=FAKE_REPO, env=env, check=True,
     )
-    # Canonicalize (macOS /private prefix etc.)
     root = subprocess.run(
         ["git", "-C", str(FAKE_REPO), "rev-parse", "--show-toplevel"],
         capture_output=True, text=True, check=True,
@@ -61,20 +44,26 @@ def setup_fake_repo() -> str:
     return root
 
 
-# ─── fixture builder ────────────────────────────────────────────────────────
-
-def fixture(cwd: str, u5: int, tl5: int, u7: int, tl7: int,
-            ctx: int, model: str) -> str:
+def fixture(cwd: str, u7: int, tl7: int, ctx: int, model: str,
+            cache_left: int | None = None, ttl: str = "1h",
+            ctx_size: int = 200_000, effort: str = "high") -> str:
     now = int(time.time())
-    return json.dumps({
+    data = {
         "workspace": {"current_dir": cwd},
         "rate_limits": {
-            "five_hour": {"used_percentage": u5, "resets_at": now + tl5},
             "seven_day": {"used_percentage": u7, "resets_at": now + tl7},
         },
-        "context_window": {"remaining_percentage": ctx},
-        "model": {"display_name": model},
-    })
+        "context_window": {"remaining_percentage": ctx,
+                           "context_window_size": ctx_size},
+        "model": {"id": f"claude-{model.lower()}-5-5", "display_name": model},
+        "effort": {"level": effort},
+    }
+    if cache_left is not None:
+        data["prompt_cache"] = {
+            "caching_observed": True, "warm": cache_left > 0, "ttl": ttl,
+            "expires_at": now + cache_left,
+        }
+    return json.dumps(data)
 
 
 def run_statusline(fixture_json: str) -> str:
@@ -84,8 +73,6 @@ def run_statusline(fixture_json: str) -> str:
     )
     return result.stdout.rstrip("\n")
 
-
-# ─── ANSI parser ────────────────────────────────────────────────────────────
 
 ANSI_RE = re.compile(r"\x1b\[([0-9;]*)m")
 
@@ -123,36 +110,42 @@ def dim_hex(hex_color: str) -> str:
 
 
 def parse_ansi(text: str):
-    """Yield (substring, fg_hex, dim_bool) tuples."""
-    fg = "#cccccc"
-    dim = False
+    fg, dim, bold, bg = "#cccccc", False, False, None
     parts = ANSI_RE.split(text)
     for i, part in enumerate(parts):
         if i % 2 == 0:
             if part:
-                yield part, fg, dim
+                yield part, fg, dim, bold, bg
             continue
         codes = [int(c) for c in part.split(";") if c] or [0]
         j = 0
         while j < len(codes):
             c = codes[j]
             if c == 0:
-                fg, dim = "#cccccc", False
+                fg, dim, bold, bg = "#cccccc", False, False, None
+            elif c == 1:
+                bold = True
             elif c == 2:
                 dim = True
             elif c == 22:
-                dim = False
+                dim = bold = False
             elif 30 <= c <= 37 or 90 <= c <= 97:
                 fg = ANSI_16.get(c, "#cccccc")
-            elif c == 38 and j + 1 < len(codes):
+            elif c in (38, 48) and j + 1 < len(codes):
                 mode = codes[j + 1]
+                color = None
                 if mode == 5 and j + 2 < len(codes):
-                    fg = xterm256_to_hex(codes[j + 2])
+                    color = xterm256_to_hex(codes[j + 2])
                     j += 2
                 elif mode == 2 and j + 4 < len(codes):
                     r, g, b = codes[j + 2], codes[j + 3], codes[j + 4]
-                    fg = f"#{r:02x}{g:02x}{b:02x}"
+                    color = f"#{r:02x}{g:02x}{b:02x}"
                     j += 4
+                if color:
+                    if c == 38:
+                        fg = color
+                    else:
+                        bg = color
             j += 1
 
 
@@ -163,51 +156,50 @@ def xml_escape(s: str) -> str:
 
 
 def row_to_tspans(text: str) -> str:
-    out = []
-    for s, fg, dim in parse_ansi(text):
+    rects, spans, col = [], [], 0
+    for s, fg, dim, bold, bg in parse_ansi(text):
         color = dim_hex(fg) if dim else fg
-        out.append(f'<tspan fill="{color}">{xml_escape(s)}</tspan>')
-    return "".join(out)
+        weight = ' font-weight="bold"' if bold else ""
+        spans.append(f'<tspan fill="{color}"{weight}>{xml_escape(s)}</tspan>')
+        if bg:
+            rects.append((col, len(s), bg))
+        col += len(s)
+    return rects, "".join(spans)
 
-
-# ─── configs ────────────────────────────────────────────────────────────────
 
 def build_configs(cwd: str):
-    """Each entry is (caption, fixture_json)."""
-    # midwindow pacing: target = 50, score = (used - 50) * 0.875
-    #   purple ≤ -20  green ≤ -6  neutral ≤ 5  yellow ≤ 15  red > 15
-    mid5, mid7 = H // 2, D // 2
+    mid7 = D // 2
     return [
-        ("on pace — opus, normal load",
-         fixture(cwd, u5=45, tl5=mid5, u7=48, tl7=mid7, ctx=54, model="Opus 4.6")),
+        ("on pace — fable 1M, cache fresh",
+         fixture(cwd, u7=48, tl7=mid7, ctx=80, model="Fable", cache_left=3500,
+                 ctx_size=1_000_000)),
 
         ("under-pacing — green, plenty of budget",
-         fixture(cwd, u5=30, tl5=mid5, u7=32, tl7=mid7, ctx=72, model="Opus 4.6")),
+         fixture(cwd, u7=32, tl7=mid7, ctx=72, model="Opus", cache_left=2400)),
 
         ("deep underspend — purple, ghost chasing",
-         fixture(cwd, u5=18, tl5=mid5, u7=18, tl7=mid7, ctx=80, model="Opus 4.6")),
+         fixture(cwd, u7=18, tl7=mid7, ctx=80, model="Sonnet", cache_left=1500)),
 
-        ("mild overspend — yellow, pac retreating",
-         fixture(cwd, u5=55, tl5=mid5, u7=62, tl7=mid7, ctx=40, model="Opus 4.6")),
+        ("mild overspend — yellow, cache cooling (<10m)",
+         fixture(cwd, u7=62, tl7=mid7, ctx=40, model="Opus", cache_left=420)),
 
-        ("red alert — opus burning, ctx tightening",
-         fixture(cwd, u5=70, tl5=mid5, u7=82, tl7=mid7, ctx=22, model="Opus 4.6")),
+        ("red alert — 7d burning, ctx tightening, last cache minute",
+         fixture(cwd, u7=82, tl7=mid7, ctx=22, model="Opus", cache_left=45)),
 
-        ("final-window sprint — 7d resets inside 5h",
-         fixture(cwd, u5=55, tl5=mid5, u7=65, tl7=3600, ctx=48, model="Opus 4.6")),
+        ("final-window sprint — 7d resets in 1h, cache cold",
+         fixture(cwd, u7=65, tl7=3600, ctx=48, model="Fable", cache_left=0)),
 
         ("haiku — calm, low pacing pressure",
-         fixture(cwd, u5=25, tl5=mid5, u7=30, tl7=mid7, ctx=88, model="Haiku 4.5")),
+         fixture(cwd, u7=30, tl7=mid7, ctx=88, model="Haiku", cache_left=2000)),
     ]
 
-
-# ─── SVG assembly ───────────────────────────────────────────────────────────
 
 SVG_BG = "#161622"
 SVG_FG_CAPTION = "#6e6a86"
 FONT_SIZE = 20
+CELL_W = FONT_SIZE * 0.602
 CAPTION_SIZE = 11
-ROW_GAP = 18          # gap between rows
+ROW_GAP = 18
 ROW_BLOCK = FONT_SIZE + CAPTION_SIZE + 8 + ROW_GAP
 PAD_X = 36
 PAD_Y = 36
@@ -240,11 +232,16 @@ def build_svg(rows) -> str:
     ]
 
     y = PAD_Y + CAPTION_SIZE
-    for caption, tspans in rows:
+    for caption, (rects, tspans) in rows:
         out.append(
             f'<text x="{PAD_X}" y="{y}" class="caption">'
             f'{xml_escape(caption.upper())}</text>'
         )
+        for col, n, bg in rects:
+            out.append(
+                f'<rect x="{PAD_X + col * CELL_W:.1f}" y="{y + 10}" '
+                f'width="{n * CELL_W:.1f}" height="{FONT_SIZE + 1}" fill="{bg}"/>'
+            )
         out.append(
             f'<text x="{PAD_X}" y="{y + FONT_SIZE + 6}" class="mono" '
             f'xml:space="preserve">{tspans}</text>'
@@ -255,20 +252,7 @@ def build_svg(rows) -> str:
     return "\n".join(out)
 
 
-# ─── entry ──────────────────────────────────────────────────────────────────
-
 def rasterize_to_png() -> None:
-    """Use librsvg's rsvg-convert to rasterize the SVG at PNG_WIDTH px wide.
-
-    Height scales proportionally, preserving the SVG's aspect ratio. We moved
-    off macOS qlmanage because its WebKit renderer silently drops later
-    <tspan> elements in long xml:space="preserve" <text> rows that embed an
-    @font-face, and because `qlmanage -s N` always produces square output.
-
-    GitHub's Markdown sanitizer strips <style> from SVGs, which breaks the
-    embedded font — so README pages need a PNG, not the SVG directly. The SVG
-    stays in-repo as the high-fidelity source artifact.
-    """
     subprocess.run(
         [
             "rsvg-convert",

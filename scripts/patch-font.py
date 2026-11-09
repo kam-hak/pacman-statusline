@@ -1,15 +1,4 @@
 #!/usr/bin/env python3
-"""Patch a Nerd Font TTF to add a horizontally-mirrored pac-man glyph.
-
-Reads the right-facing pac-man at U+F0BAF, mirrors its outline across the
-advance width, and inserts the result at the first free PUA-A codepoint
-above U+F1000 (or at ``--target-codepoint`` if specified).
-
-Prints the chosen codepoint (as ``0xXXXXX``) on the last line of stdout so
-the installer can capture it via ``tail -n1``.
-
-Intended to run via ``uv run --with fonttools python3 scripts/patch-font.py``.
-"""
 from __future__ import annotations
 
 import argparse
@@ -44,7 +33,6 @@ def build_mirrored_glyph(font: TTFont, source_cp: int):
     advance = source.width
 
     pen = TTGlyphPen(glyph_set)
-    # x' = advance - x  ↔  scale(-1, 1) then translate(advance, 0)
     source.draw(TransformPen(pen, Transform(-1, 0, 0, 1, advance, 0)))
     return pen.glyph(), advance
 
@@ -62,8 +50,6 @@ def install_glyph(font: TTFont, glyph, advance: int, target_cp: int) -> str:
     if name not in font.getGlyphOrder():
         font.glyphOrder.append(name)
 
-    # Format 4 cmap subtables are BMP-only (<= U+FFFF). Anything in the
-    # supplementary planes must go into a format 12/13 subtable.
     for subtable in font["cmap"].tables:
         if not subtable.isUnicode():
             continue
