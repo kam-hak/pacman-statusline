@@ -4,10 +4,11 @@ A Pac-Man themed status line for [Claude Code](https://claude.com/claude-code).
 
 ![pacman-statusline in several pacing states](assets/mockup.png)
 
-A mildy opinionated Pac-man theme for Claude's status line. Designed around two goals:
+A mildy opinionated Pac-man theme for Claude's status line. Designed around three goals:
 
 - Using (eating) weekly quota, but not running out (dying).
 - Staying out of the 'dumb zone' of context with Claude.
+- Knowing when the prompt cache is about to go cold (the coffee cup).
 
 Objects:
 
