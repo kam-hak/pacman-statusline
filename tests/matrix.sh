@@ -74,12 +74,12 @@ row "1M ctx=50% (over budget)"  50 $HALF7 50 sonnet-1m
 row "1M ctx=30% (deep zone)"    50 $HALF7 30 sonnet-1m
 
 hdr "Prompt cache (1h TTL; minutes floored, last minute reads 0m)"
-for l in 3590 2400 1500 700 599 300 119 61 59 5 0; do
+for l in 3590 2400 1500 700 599 301 299 121 119 61 59 5 0; do
   row "cache left=${l}s" 50 $HALF7 47 sonnet /Users/kamran $l 1h
 done
 
 hdr "Prompt cache (5m TTL)"
-for l in 250 150 80 29 0; do
+for l in 250 150 119 59 29 0; do
   row "cache left=${l}s" 50 $HALF7 47 sonnet /Users/kamran $l 5m
 done
 

@@ -355,7 +355,7 @@ ctx_segment() {
 }
 
 CACHE_present=0; CACHE_warm=0; CACHE_left=0
-CACHE_T_amber=1800; CACHE_T_alert=600; CACHE_T_block=120
+CACHE_T_amber=1800; CACHE_T_blue=600; CACHE_T_block=300; CACHE_T_bang=120
 
 cache_parse() {
   [ "$IN_cache_seen" = "true" ] || return
@@ -365,7 +365,7 @@ cache_parse() {
   CACHE_left=$(( IN_cache_expires - IN_now ))
   (( CACHE_left > 0 )) && CACHE_warm=1
   if [ "$IN_cache_ttl" = "5m" ]; then
-    CACHE_T_amber=180; CACHE_T_alert=90; CACHE_T_block=30
+    CACHE_T_amber=180; CACHE_T_blue=120; CACHE_T_block=60; CACHE_T_bang=30
   fi
 }
 
@@ -376,10 +376,12 @@ cache_segment() {
     return
   fi
   local mins=$(( CACHE_left / 60 ))
-  if   (( CACHE_left <= CACHE_T_block )); then
-    printf "  \033[1;97;48;5;27m %s %dm \033[0m\033[${C_RED}m!!\033[0m" "$_CUP" "$mins"
-  elif (( CACHE_left <= CACHE_T_alert )); then
-    printf "  \033[1;38;5;39m%s\033[0m \033[1;${C_BRT}m%dm\033[0m\033[${C_RED}m!!\033[0m" "$_CUP" "$mins"
+  if   (( CACHE_left < CACHE_T_bang )); then
+    printf "  \033[1;97;48;5;27m %s \033[0m\033[${C_RED}m!!\033[0m \033[1;${C_RED}m%dm\033[0m" "$_CUP" "$mins"
+  elif (( CACHE_left <= CACHE_T_block )); then
+    printf "  \033[1;97;48;5;27m %s \033[0m \033[1;${C_BRT}m%dm\033[0m" "$_CUP" "$mins"
+  elif (( CACHE_left <= CACHE_T_blue )); then
+    printf "  \033[1;38;5;39m%s\033[0m \033[1;${C_BRT}m%dm\033[0m" "$_CUP" "$mins"
   elif (( CACHE_left <= CACHE_T_amber )); then
     printf "  \033[38;5;208m%s\033[0m \033[${C_DIM}m%dm\033[0m" "$_CUP" "$mins"
   else
