@@ -21,6 +21,7 @@ _PELLET=$'\xe2\x97\x8f'
 _BAR=$'\xe2\x94\x82'
 _RESET=$'\xe2\x86\xbb'
 _CUP=$'\xf3\xb0\x85\xb6'
+_TRI=$'\xe2\x96\xb4'
 _WT=$'\xe2\x8e\x87'
 _OCTO=$'\xef\x84\x93'
 
@@ -76,12 +77,12 @@ tier_color() {
 score_color() { tier_color "$(tier_of "$1")"; }
 
 IN_cwd=""; IN_rl7_used=""; IN_rl7_reset=""
-IN_ctx=""; IN_ctx_size=""; IN_model_id=""; IN_model_name=""; IN_effort=""
+IN_ctx=""; IN_ctx_size=""; IN_ctx_tokens=""; IN_model_id=""; IN_model_name=""; IN_effort=""
 IN_cache_seen=""; IN_cache_warm=""; IN_cache_ttl=""; IN_cache_expires=""
 IN_autocompact=""; IN_now=0
 
 input_parse() {
-  IFS=$'\x1f' read -r IN_cwd IN_rl7_used IN_rl7_reset IN_ctx IN_ctx_size \
+  IFS=$'\x1f' read -r IN_cwd IN_rl7_used IN_rl7_reset IN_ctx IN_ctx_size IN_ctx_tokens \
     IN_model_id IN_model_name IN_effort \
     IN_cache_seen IN_cache_warm IN_cache_ttl IN_cache_expires \
     < <(echo "$input" | jq -r '[
@@ -90,6 +91,7 @@ input_parse() {
       (.rate_limits.seven_day.resets_at // ""),
       (.context_window.remaining_percentage // ""),
       (.context_window.context_window_size // ""),
+      (.context_window.total_input_tokens // ""),
       (.model.id // ""),
       (.model.display_name // ""),
       (.effort.level // ""),
@@ -318,7 +320,7 @@ _ctx_quality_budget() {
     echo "$CTX_effective"
     return
   fi
-  local total_K=1000 thresh_K=350
+  local total_K=1000 thresh_K=500
   local used_K=$(( (100 - raw) * total_K / 100 ))
   echo $(( (thresh_K - used_K) * 100 / thresh_K ))
 }
@@ -354,10 +356,13 @@ ctx_segment() {
   fi
 }
 
-CACHE_present=0; CACHE_warm=0; CACHE_left=0
+CACHE_present=0; CACHE_warm=0; CACHE_left=0; CACHE_history=0
 CACHE_T_amber=1800; CACHE_T_blue=600; CACHE_T_block=300; CACHE_T_bang=120
 
 cache_parse() {
+  [[ "$IN_ctx_tokens" =~ ^[0-9]+$ ]] && (( IN_ctx_tokens > 0 )) && CACHE_history=1
+  # No cache block yet but history loaded (e.g. --resume): next turn re-caches it.
+  [ -z "$IN_cache_seen" ] && (( CACHE_history )) && { CACHE_present=1; return; }
   [ "$IN_cache_seen" = "true" ] || return
   CACHE_present=1
   [ "$IN_cache_warm" = "true" ] || return
@@ -373,6 +378,7 @@ cache_segment() {
   (( CACHE_present )) || return
   if (( ! CACHE_warm )); then
     printf "  \033[${C_DIM}m%s\033[0m" "$_CUP"
+    (( CACHE_history )) && printf "\033[${C_RED}m%s\033[0m" "$_TRI"
     return
   fi
   local mins=$(( CACHE_left / 60 ))

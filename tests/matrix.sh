@@ -69,8 +69,9 @@ row "any model, 7d red → !!" 90 $HALF7 47 sonnet
 
 hdr "1M context (quality-budget display)"
 row "1M ctx=80% (deep plenty)"  50 $HALF7 80 sonnet-1m
-row "1M ctx=65% (at 350K)"      50 $HALF7 65 sonnet-1m
-row "1M ctx=50% (over budget)"  50 $HALF7 50 sonnet-1m
+row "1M ctx=65% (350K used)"    50 $HALF7 65 sonnet-1m
+row "1M ctx=50% (at 500K)"      50 $HALF7 50 sonnet-1m
+row "1M ctx=40% (over budget)"  50 $HALF7 40 sonnet-1m
 row "1M ctx=30% (deep zone)"    50 $HALF7 30 sonnet-1m
 
 hdr "Prompt cache (1h TTL; minutes floored, last minute reads 0m)"
@@ -110,5 +111,11 @@ printf '%-40s' "no model"
 printf '{"workspace":{"current_dir":"/Users/kamran"}}' | bash "$SL"
 printf '%-40s' "cache seen but expires_at null"
 printf '{"workspace":{"current_dir":"/Users/kamran"},"prompt_cache":{"caching_observed":true,"warm":false,"ttl":"1h","expires_at":null}}' | bash "$SL"
+printf '%-40s' "cold cache, fresh (no tokens) → gray"
+printf '{"workspace":{"current_dir":"/Users/kamran"},"context_window":{"total_input_tokens":0},"prompt_cache":{"caching_observed":true,"warm":false,"ttl":"1h","expires_at":null}}' | bash "$SL"
+printf '%-40s' "cold cache, history → red triangle"
+printf '{"workspace":{"current_dir":"/Users/kamran"},"context_window":{"total_input_tokens":84000},"prompt_cache":{"caching_observed":true,"warm":false,"ttl":"1h","expires_at":null}}' | bash "$SL"
+printf '%-40s' "resumed: history, no cache block → ▴"
+printf '{"workspace":{"current_dir":"/Users/kamran"},"context_window":{"total_input_tokens":84000}}' | bash "$SL"
 printf '%-40s' "completely empty"
 printf '{}' | bash "$SL"
