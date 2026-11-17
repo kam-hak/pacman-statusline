@@ -360,9 +360,11 @@ CACHE_present=0; CACHE_warm=0; CACHE_left=0; CACHE_history=0
 CACHE_T_amber=1800; CACHE_T_blue=600; CACHE_T_block=300; CACHE_T_bang=120
 
 cache_parse() {
+  [[ "$IN_ctx_tokens" =~ ^[0-9]+$ ]] && (( IN_ctx_tokens > 0 )) && CACHE_history=1
+  # No cache block yet but history loaded (e.g. --resume): next turn re-caches it.
+  [ -z "$IN_cache_seen" ] && (( CACHE_history )) && { CACHE_present=1; return; }
   [ "$IN_cache_seen" = "true" ] || return
   CACHE_present=1
-  [[ "$IN_ctx_tokens" =~ ^[0-9]+$ ]] && (( IN_ctx_tokens > 0 )) && CACHE_history=1
   [ "$IN_cache_warm" = "true" ] || return
   [[ "$IN_cache_expires" =~ ^[0-9]+$ ]] || return
   CACHE_left=$(( IN_cache_expires - IN_now ))
